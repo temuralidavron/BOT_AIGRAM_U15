@@ -1,394 +1,436 @@
-# 5-dars — FSM: ko'p qadamli buyurtma
+# 7-dars — Botni bazaga ulaymiz: servis qatlami
 
 | | |
 |---|---|
 | **Davomiyligi** | 90 daqiqa |
-| **Oldindan kerak** | 4-dars tugagan bo'lsin |
-| **Tayyor kod** | `darslar/5-dars/` |
-| **Oldingi darsdan farqi** | Bot endi ketma-ket savol bera oladi va javoblarni eslab qoladi |
+| **Oldindan kerak** | 6-dars tugagan bo'lsin |
+| **Tayyor kod** | `darslar/7-dars/` |
+| **Oldingi darsdan farqi** | Bot endi `data.py` dan emas, **bazadan** o'qiydi |
 
 ## Maqsad
 
-Bot foydalanuvchidan **ketma-ket** ism, telefon, manzil va to'lov turini so'rasin,
-har birini tekshirsin va oxirida buyurtmani jamlab ko'rsatsin.
+Admin panelda narx o'zgartirilsa, bot **darhol** yangi narxni ko'rsatsin.
+Kodga tegilmasin, bot qayta ishga tushirilmasin.
 
 ## Vazifalar — dars oxirida o'quvchi buni qila oladi
 
-- [ ] `StatesGroup` bilan bosqichlarni e'lon qiladi
-- [ ] `state.set_state()` va `state.update_data()` ishlatadi
-- [ ] Har bir qadamda validatsiya yozadi va noto'g'ri javobni qaytarib so'raydi
-- [ ] Bitta holat uchun **bir nechta** handler yozadi (matn, kontakt, lokatsiya)
-- [ ] `/bekor` chiqish yo'lini to'g'ri joyga qo'yadi
-- [ ] Nima uchun bot restartdan keyin holatni unutishini tushuntiradi
+- [ ] `sync_to_async` nima uchun kerakligini tushuntirib beradi
+- [ ] Servis qatlamini yozadi va handler'dan chaqiradi
+- [ ] Nima uchun servis `dict` qaytarishini asoslaydi
+- [ ] Botni `manage.py runbot` orqali ishga tushiradi
+- [ ] Handler'da ORM ishlatmaslik qoidasini biladi va sababini aytadi
 
 ## Yangi tushunchalar
 
-`StatesGroup` · `State` · `FSMContext` · `set_state` · `update_data` · `get_data` ·
-`clear` · `MemoryStorage` · `request_contact` · `request_location` · validatsiya
+`sync_to_async` · `SynchronousOnlyOperation` · servis qatlami · `dict` qaytarish ·
+management command · `settings.BOT_TOKEN` · `filter(faol=True)`
 
-## Yaratiladigan fayllar
+## Yaratiladigan / o'zgaradigan fayllar
 
 ```
 mening_botim/
-├── states.py                 ← YANGI: bosqichlar
-├── handlers/checkout.py      ← YANGI: buyurtma oqimi
-├── handlers/__init__.py      ← o'zgaradi: checkout eng birinchi
-├── callbacks.py              ← o'zgaradi: CheckoutCB qo'shiladi
-└── ...qolganlari o'zgarmaydi
+├── services.py                       ← YANGI: baza bilan yagona ko'prik
+├── storage.py                        ← o'zgaradi: endi faqat {id: soni}
+├── keyboards.py                      ← o'zgaradi: tayyor dict qabul qiladi
+├── handlers/catalog.py               ← o'zgaradi: servisdan o'qiydi
+├── handlers/cart.py                  ← o'zgaradi: baza bilan birlashtiradi
+├── shop/management/commands/runbot.py ← YANGI
+├── config/settings.py                ← o'zgaradi: BOT_TOKEN qo'shiladi
+├── main.py                           ← O'CHIRILADI
+└── data.py                           ← data_eski.py ga aylanadi (faqat seed uchun)
 ```
 
 ---
 
 ## 1-qism. Muammoni ko'rsating (10 daqiqa)
 
-**Savol bering:**
-
-> "Bot foydalanuvchidan ismini so'radi. Foydalanuvchi 'Ali' deb yozdi.
-> Keyingi xabar kelganda bot qayerdan biladi — bu ismmi yoki telefon raqammi?"
-
-O'quvchilar o'ylasin. Keyin ayting:
-
-> "Bilmaydi. Har bir xabar — **alohida, mustaqil update**. Bot xotirasiz.
-> Shuning uchun 'hozir qaysi savoldamiz' degan ma'lumotni biror joyda saqlashi kerak."
-
-**Doskaga chizing:**
-
-```
-Foydalanuvchi:  "Ali"          →  bot: bu nima? ism? manzil?
-                                    ↓
-                        state = Checkout.ism  ← bot shuni biladi
-                                    ↓
-                              demak bu ISM
-```
-
-> "Bu — **FSM**, ya'ni holatlar mashinasi. Django'da bunga eng yaqin narsa —
-> ko'p sahifali forma yoki `request.session`."
-
----
-
-## 2-qism. Bosqichlarni e'lon qilamiz (10 daqiqa)
-
-```bash
-touch states.py
-```
+`handlers/catalog.py` ni oching va shu qatorni ko'rsating:
 
 ```python
-from aiogram.fsm.state import State, StatesGroup
-
-
-class Checkout(StatesGroup):
-    ism = State()
-    telefon = State()
-    manzil = State()
-    tolov = State()
+from data import CATEGORIES
 ```
-
-**Tushuntiring:**
-
-> "Bu shunchaki nomlar ro'yxati. `Checkout.ism` — bu satr `'Checkout:ism'`.
-> Bot foydalanuvchi uchun shu satrni eslab qoladi."
-
-**Muhim savol bering:**
-
-> "Bot 100 ta foydalanuvchiga xizmat qilyapti. Holat qanday saqlanadi —
-> hammasi uchun bittami?"
-
-Javob: yo'q. Kalit — **`(bot_id, chat_id, user_id)`** uchligi. Har kimning
-holati alohida.
-
-### `main.py` da storage
-
-```python
-from aiogram.fsm.storage.memory import MemoryStorage
-
-dp = Dispatcher(storage=MemoryStorage())
-```
-
-> "`MemoryStorage` — holat operativ xotirada. Bot restart bo'lsa — yo'qoladi.
-> Production'da `RedisStorage` ishlatiladi, u restartdan keyin ham saqlanadi."
-
----
-
-## 3-qism. Birinchi qadam (15 daqiqa)
-
-`handlers/checkout.py`:
-
-```python
-from aiogram import F, Router
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
-
-import storage
-from callbacks import CartCB
-from states import Checkout
-
-router = Router(name="checkout")
-
-
-@router.callback_query(CartCB.filter(F.action == "checkout"))
-async def boshlash(call: CallbackQuery, state: FSMContext):
-    if not storage.olish(call.from_user.id):
-        return await call.answer("Savat bo'sh", show_alert=True)
-
-    await state.set_state(Checkout.ism)
-    await call.message.answer("👤 Ismingizni kiriting:", reply_markup=bekor_kb())
-    await call.answer()
-```
-
-**`state: FSMContext` argumentini ko'rsating:**
-
-> "4-darsda `callback_data` argumentini aiogram o'zi to'ldirgan edi. Bu ham
-> xuddi shunday — `state` deb nomlasangiz, aiogram o'zi beradi."
-
-### Ismni qabul qilish
-
-```python
-@router.message(Checkout.ism, F.text)
-async def ism(message: Message, state: FSMContext):
-    qiymat = (message.text or "").strip()
-    if len(qiymat) < 3:
-        return await message.answer("❌ Ism kamida 3 ta harf bo'lsin. Qayta kiriting:")
-
-    await state.update_data(ism=qiymat)
-    await state.set_state(Checkout.telefon)
-    await message.answer("📱 Telefon raqamingizni yuboring:", reply_markup=telefon_kb())
-```
-
-**Ikkita filtrni ko'rsating:**
-
-```python
-@router.message(Checkout.ism, F.text)
-#               └──────┬─────┘  └──┬──┘
-#            "faqat shu holatda"  "va matn bo'lsa"
-```
-
-> "Ikkalasi ham bajarilishi kerak. Boshqa holatdagi foydalanuvchi bu handler'ga
-> tushmaydi."
-
-**Validatsiya naqshini alohida ta'kidlang:**
-
-```python
-if len(qiymat) < 3:
-    return await message.answer("❌ ...")     # ← state O'ZGARMAYDI
-```
-
-> "Diqqat: xato bo'lsa `set_state` chaqirilmaydi. Foydalanuvchi **shu holatda
-> qoladi** va qayta yozadi. Bu — FSM'ning asosiy naqshi."
-
----
-
-## 4-qism. Bitta holat — bir nechta handler (20 daqiqa)
-
-Telefon ikki xil kelishi mumkin: tugma orqali **kontakt** yoki qo'lda **matn**.
-
-```python
-@router.message(Checkout.telefon, F.contact)
-async def telefon_kontakt(message: Message, state: FSMContext):
-    await _telefon_saqlash(message, state, message.contact.phone_number)
-
-
-@router.message(Checkout.telefon, F.text)
-async def telefon_matn(message: Message, state: FSMContext):
-    await _telefon_saqlash(message, state, message.text)
-
-
-async def _telefon_saqlash(message: Message, state: FSMContext, xom: str):
-    raqam = telefon_tekshir(xom)
-    if not raqam:
-        return await message.answer("❌ Raqam noto'g'ri.\nNamuna: <code>+998901234567</code>")
-    await state.update_data(telefon=raqam)
-    await state.set_state(Checkout.manzil)
-    await message.answer("📍 Manzilni yuboring...", reply_markup=manzil_kb())
-```
-
-**`_` bilan boshlangan nom** — bu handler emas, yordamchi funksiya. Ikkalasi
-bir xil ishni qiladi, takrorlamaslik uchun ajratdik.
-
-### Telefonni tekshirish
-
-```python
-import re
-
-def telefon_tekshir(matn: str) -> str | None:
-    raqamlar = re.sub(r"\D", "", matn or "")     # faqat raqamlarni qoldiradi
-    if len(raqamlar) == 9:
-        raqamlar = "998" + raqamlar              # 901112233 -> 998901112233
-    return "+" + raqamlar if len(raqamlar) == 12 and raqamlar.startswith("998") else None
-```
-
-Doskada sinab ko'ring:
-
-| Kiritilgan | Natija |
-|---|---|
-| `+998901112233` | `+998901112233` |
-| `901112233` | `+998901112233` |
-| `90 111 22 33` | `+998901112233` |
-| `12345` | `None` → xato |
-
----
-
-## 5-qism. Lokatsiya va HAQIQIY TUZOQ (20 daqiqa)
-
-> Bu qismni albatta o'ting — o'quvchilaringiz shunga duch keladi.
-
-### Uchta handler kerak
-
-```python
-@router.message(Checkout.manzil, F.location)      # xaritadan pin
-async def manzil_pin(message: Message, state: FSMContext):
-    await state.update_data(
-        manzil=f"📍 {message.location.latitude:.4f}, {message.location.longitude:.4f}")
-    await _tolovga_otish(message, state)
-
-
-@router.message(Checkout.manzil, F.text)          # matnli manzil
-async def manzil_matn(message: Message, state: FSMContext):
-    qiymat = (message.text or "").strip()
-
-    if qiymat == "📍 Lokatsiya yuborish":
-        return await message.answer(
-            "🖥 Kompyuterdagi Telegram lokatsiya yubora olmaydi.\n\n"
-            "Manzilni matn bilan yozing: <code>Chilonzor 9-kvartal, 42-uy</code>")
-    if len(qiymat) < 5:
-        return await message.answer("❌ Manzil kamida 5 ta belgi bo'lsin.")
-
-    await state.update_data(manzil=qiymat)
-    await _tolovga_otish(message, state)
-
-
-@router.message(Checkout.manzil)                  # rasm, stiker, ovoz...
-async def manzil_notogri(message: Message):
-    await message.answer("❌ Lokatsiya yuboring yoki manzilni matn bilan yozing.")
-```
-
-### Tuzoqni ko'rsating
-
-Kompyuterdagi Telegram'dan `📍 Lokatsiya yuborish` tugmasini bosing.
-
-**Natija:** hech nima bo'lmaydi.
 
 **Ayting:**
 
-> "Bu bot xatosi emas. `request_location` tugmasi **faqat telefondagi Telegramda**
-> ishlaydi. Kompyuterda va brauzerda u umuman hech nima qilmaydi — bu Telegram
-> platformasining cheklovi.
->
-> Foydalanuvchi buni bilmaydi. U bosadi, hech nima bo'lmaydi, va 'bot buzuq'
-> deb o'ylab ketib qoladi. Shuning uchun biz **oldindan aytamiz** va matnli
-> muqobil beramiz."
+> "Kecha butun katalogni bazaga ko'chirdik. Admin panelda narxni o'zgartirdik.
+> Lekin bot hali ham `data.py` dan o'qiyapti. Ya'ni bazadagi o'zgarish
+> botga ta'sir qilmayapti."
 
-### Ikkinchi tuzoq
+Buni **ko'rsating**: admin panelda narxni 99 000 qiling, botni oching — hali 32 000.
 
-Telefondan `📍 Lokatsiya yuborish` yozuvini **matn qilib** yuboring.
+### Birinchi urinish — va u ishlamaydi
 
-Agar `qiymat == "📍 Lokatsiya yuborish"` tekshiruvi bo'lmasa — bu satr
-**manzil sifatida bazaga tushib ketadi**.
-
-> "Umumiy qoida: FSM ichida **tugma yorlig'i matn sifatida kelib qolishi**ni
-> doim hisobga oling."
-
-### Uchinchi handler nima uchun kerak
-
-Foydalanuvchi stiker yubordi. `F.location` ham, `F.text` ham mos kelmadi.
-Filtrsiz uchinchi handler bo'lmasa — bot **jim qoladi**.
-
----
-
-## 6-qism. Chiqish yo'li va yakun (15 daqiqa)
-
-### `/bekor` — eng birinchi
+`catalog.py` da `from data import CATEGORIES` o'rniga to'g'ridan-to'g'ri yozib ko'ring:
 
 ```python
-@router.message(Command("bekor"))
-@router.message(F.text == BTN_BEKOR)
-async def bekor(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("↩️ Bekor qilindi.", reply_markup=ReplyKeyboardRemove())
-    await message.answer("Asosiy menyu:",
-                         reply_markup=kb.bosh_menyu(storage.dona(message.from_user.id)))
-```
+from shop.models import Product
 
-### `handlers/__init__.py` — yangi tartib
-
-```python
-def register(dp: Dispatcher) -> None:
-    dp.include_router(checkout.router)   # FSM + /bekor — ENG BIRINCHI
-    dp.include_router(cart.router)
-    dp.include_router(catalog.router)
-    dp.include_router(common.router)     # /start + FALLBACK — eng oxirida
-```
-
-**Nima uchun checkout birinchi** — sinab ko'rsating: uni pastga tushiring,
-FSM ichida `/bekor` yozing → ishlamaydi, foydalanuvchi qamalib qoladi.
-
-### `common.py` da bitta o'zgarish
-
-```python
-@router.message(F.text, StateFilter(None))     # ← StateFilter qo'shildi
-async def boshqa(message: Message):
+@router.callback_query(ProductCB.filter(F.action == "open"))
+async def mahsulot(call: CallbackQuery, callback_data: ProductCB):
+    m = Product.objects.get(pk=callback_data.product_id)      # ← shunday qilaylik
     ...
 ```
 
-> "Usiz fallback FSM ichidagi javoblarni ham ushlab oladi. `StateFilter(None)`
-> — 'faqat hech qanday holatda bo'lmaganda ishla' degani."
+Ishga tushiring va tugmani bosing:
 
-### Tasdiq va yakun
-
-```python
-@router.callback_query(CheckoutCB.filter(F.action == "submit"))
-async def tasdiq(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    jami = storage.jami(call.from_user.id)
-
-    storage.tozalash(call.from_user.id)
-    await state.clear()                        # ← MAJBURIY
-
-    await call.message.edit_text(
-        f"🎉 <b>Buyurtma qabul qilindi!</b>\n\n"
-        f"👤 {data['ism']}\n📱 {data['telefon']}\n📍 {data['manzil']}\n"
-        f"💳 <b>{narx(jami)}</b>"
-    )
-    await call.answer("✅")
+```
+django.core.exceptions.SynchronousOnlyOperation:
+You cannot call this from an async context - use a thread or sync_to_async.
 ```
 
-> "`state.clear()` ni unutmang. Aks holda keyingi buyurtmada eski ma'lumot chiqadi."
+### Nima uchun — doskaga chizing
+
+```
+Django ORM  →  SINXRON    (so'rov yuborib, javob kelguncha KUTADI)
+aiogram     →  ASINXRON   (kutish paytida boshqa ish qiladi)
+```
+
+> "Agar asinxron kod ichida sinxron ORM chaqirsak, u butun botni **muzlatib
+> qo'yadi** — 100 ta foydalanuvchi bittasini kutib turadi. Django buni oldindan
+> sezib, xato beradi: 'bunday qilma'."
+
+**Yechim:** `sync_to_async` — sinxron funksiyani alohida oqimda (thread) ishlatadi,
+bot esa kutish paytida boshqa foydalanuvchilarga xizmat qiladi.
 
 ---
 
-## 7-qism. Restart sinovi (5 daqiqa)
+## 2-qism. Servis qatlami (25 daqiqa)
 
-1. Buyurtmani boshlang, ismni yozing
-2. Botni `Ctrl+C` bilan to'xtating
-3. Qayta ishga tushiring
-4. Telefon raqam yozing
+### Nima uchun alohida fayl
 
-**Natija:** bot tushunmaydi, "Menyudan tanlang" deydi.
+> "Har bir handler'da `sync_to_async` yozib o'tirmaymiz. Bazaga tegadigan
+> hamma narsani **bitta faylga** yig'amiz. Bu — Django'dagi `models.py` ning
+> manager qismiga o'xshaydi."
 
-> "Chunki `MemoryStorage` — xotirada. Bot o'chganda holat yo'qoldi.
-> Production'da `RedisStorage` ishlatiladi. Buni 14-darsda ko'ramiz."
+`services.py` yarating:
+
+```python
+from asgiref.sync import sync_to_async
+
+from shop.models import Category, Product
+
+
+def narx(son) -> str:
+    return f"{int(son):,}".replace(",", " ") + " so'm"
+
+
+def _mahsulot_dict(m: Product) -> dict:
+    return {"id": m.pk, "nom": m.nom, "tavsif": m.tavsif,
+            "narx": int(m.narx), "kategoriya_id": m.kategoriya_id}
+
+
+@sync_to_async
+def mahsulotlar(kategoriya_id: int) -> list[dict]:
+    qs = Product.objects.filter(kategoriya_id=kategoriya_id, faol=True)
+    return [_mahsulot_dict(m) for m in qs]
+
+
+@sync_to_async
+def mahsulot_top(mahsulot_id: int) -> dict | None:
+    m = Product.objects.filter(pk=mahsulot_id, faol=True).first()
+    return _mahsulot_dict(m) if m else None
+```
+
+### ENG MUHIM QOIDA — nima uchun `dict`
+
+**To'xtang. Bu darsning eng muhim 5 daqiqasi.**
+
+Shunday qilib ko'rsating — servis model qaytarsin:
+
+```python
+@sync_to_async
+def mahsulot_top(mahsulot_id: int) -> Product | None:
+    return Product.objects.filter(pk=mahsulot_id).first()      # model qaytardik
+```
+
+Handler'da:
+
+```python
+m = await services.mahsulot_top(1)
+print(m.nom)                    # ishlaydi
+print(m.kategoriya.nom)         # ← PORTLAYDI!
+```
+
+```
+SynchronousOnlyOperation
+```
+
+**So'rang:**
+
+> "Nega? `sync_to_async` ishlatdik-ku."
+
+**Javob:**
+
+> "`m.nom` — bu allaqachon o'qilgan ma'lumot, muammo yo'q. Lekin
+> `m.kategoriya` — bu **yangi SQL so'rov**. Django uni faqat so'ralganda
+> bajaradi, bunga **lazy loading** deyiladi. Va u asinxron kontekstda
+> portlaydi."
+
+**Doskaga yozing:**
+
+```
+QOIDA: servis handler'ga "jonli" model bermaydi.
+       Servis DICT qaytaradi.
+```
+
+> "Shunda handler'da tasodifan lazy FK'ga tegib ketish **imkonsiz** bo'ladi.
+> Bu qoida sizni o'nlab soatlik xatodan qutqaradi."
+
+### `filter(faol=True)` — sezilmaydigan foyda
+
+```python
+Product.objects.filter(kategoriya_id=kategoriya_id, faol=True)
+```
+
+> "Admin panelda `faol` belgisini olib tashlash — mahsulotni **o'chirmasdan**
+> yashirish. Buyurtmalar tarixi buzilmaydi, lekin botda ko'rinmaydi.
+> Bu — mahsulot tugab qolganda kerak bo'ladi."
+
+Amalda ko'rsating: admin panelda `Chizburger` ning `faol` belgisini oching,
+botda menyuga qarang — yo'q. Qaytaring — paydo bo'ldi.
+
+---
+
+## 3-qism. Handler'larni ko'chiramiz (20 daqiqa)
+
+### Oldin va keyin — yonma-yon ko'rsating
+
+```python
+# 6-dars
+kategoriya = CATEGORIES.get(kalit)
+royxat = kategoriya["mahsulotlar"]
+
+# 7-dars
+k = await services.kategoriya_top(callback_data.category_id)
+royxat = await services.mahsulotlar(k["id"])
+```
+
+To'liq handler:
+
+```python
+@router.callback_query(CategoryCB.filter())
+async def kategoriya(call: CallbackQuery, callback_data: CategoryCB):
+    k = await services.kategoriya_top(callback_data.category_id)
+    if not k:
+        return await call.answer("Kategoriya topilmadi", show_alert=True)
+
+    royxat = await services.mahsulotlar(k["id"])
+    if not royxat:
+        return await call.answer("Bu kategoriyada mahsulot yo'q", show_alert=True)
+
+    await call.message.edit_text(f"<b>{k['toliq_nom']}</b>\n\nMahsulotni tanlang:",
+                                 reply_markup=kb.mahsulotlar(royxat))
+    await call.answer()
+```
+
+**Ikkita `if` ni ta'kidlang:**
+
+> "Bazadan kelgan narsa **yo'q bo'lishi mumkin**. Lug'atda kalit doim bor edi,
+> bazada esa admin o'chirib yuborgan bo'lishi mumkin. Shuning uchun har safar
+> tekshiramiz."
+
+### `callbacks.py` da bitta o'zgarish
+
+```python
+class CategoryCB(CallbackData, prefix="cat"):
+    category_id: int          # oldin: key: str
+```
+
+> "Endi kategoriya kaliti — bazadagi `id`, ya'ni son."
+
+### `keyboards.py` — endi ma'lumot tashqaridan keladi
+
+```python
+def kategoriyalar(royxat: list[dict]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for k in royxat:
+        kb.button(text=k["toliq_nom"], callback_data=CategoryCB(category_id=k["id"]))
+    kb.adjust(2)
+    return kb.as_markup()
+```
+
+**Muhim qoidani ayting:**
+
+> "Diqqat qiling — bu faylda bitta ham `await` va bitta ham `.objects.` yo'q.
+> Klaviatura bazani **bilmaydi**. Unga tayyor ro'yxat beriladi. Bu qatlamlarni
+> ajratish deyiladi va u kodni test qilinadigan qiladi."
+
+---
+
+## 4-qism. Savat va baza (15 daqiqa)
+
+### `storage.py` yengillashadi
+
+Oldin savat mahsulot nomini ham bilardi. Endi **faqat id va soni**:
+
+```python
+_SAVATLAR: dict[int, dict[int, int]] = {}     # {user_id: {mahsulot_id: soni}}
+
+
+def xom(user_id: int) -> dict[int, int]:
+    return dict(_SAVATLAR.get(user_id, {}))
+```
+
+### Birlashtirish `handlers/cart.py` da
+
+```python
+async def savat_elementlari(user_id: int) -> list[dict]:
+    """{id: soni} + bazadagi ma'lumot = to'liq savat."""
+    xom = storage.xom(user_id)
+    if not xom:
+        return []
+    mahsulotlar = await services.mahsulotlar_by_ids(list(xom))
+    natija = []
+    for mahsulot_id, soni in xom.items():
+        m = mahsulotlar.get(mahsulot_id)
+        if m:                          # mahsulot o'chirilgan bo'lishi mumkin
+            natija.append({**m, "soni": soni, "summa": m["narx"] * soni})
+    return natija
+```
+
+**Ikkita narsani ta'kidlang:**
+
+1. **Bitta so'rov** — har bir mahsulot uchun alohida emas:
+   ```python
+   Product.objects.filter(pk__in=idlar)      # 1 ta so'rov
+   ```
+   > "Agar sikl ichida `mahsulot_top()` chaqirsak, 10 ta mahsulot uchun 10 ta
+   > SQL so'rov ketardi. Bunga **N+1 muammosi** deyiladi."
+
+2. **`if m:`** — savatdagi mahsulot bazadan o'chirilgan bo'lishi mumkin
+
+### Eng chiroyli natija
+
+> "Endi narx **har safar bazadan** olinadi. Ya'ni admin panelda narxni
+> o'zgartirsangiz, savatdagi summa ham darhol yangilanadi."
+
+Buni sinab ko'rsating — bu darsning eng kuchli lahzasi.
+
+---
+
+## 5-qism. `manage.py runbot` (15 daqiqa)
+
+### Nima uchun `python main.py` endi ishlamaydi
+
+Sinab ko'ring:
+
+```bash
+python main.py
+```
+
+```
+django.core.exceptions.ImproperlyConfigured:
+Requested setting INSTALLED_APPS, but settings are not configured.
+```
+
+> "Bot endi Django modellaridan foydalanadi. Django esa ishlashidan oldin
+> **sozlanishi** kerak: qaysi baza, qaysi app'lar, qaysi til. `manage.py`
+> buni o'zi qiladi. Shuning uchun botni ham `manage.py` orqali ishga
+> tushiramiz."
+
+### `settings.py` ga token
+
+```python
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
+
+# ...fayl oxirida:
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+```
+
+### `shop/management/commands/runbot.py`
+
+```python
+import asyncio
+import logging
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
+
+logger = logging.getLogger(__name__)
+
+
+async def run():
+    from handlers import register
+
+    bot = Bot(token=settings.BOT_TOKEN,
+              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher(storage=MemoryStorage())
+    register(dp)
+    try:
+        me = await bot.get_me()
+        logger.info("Bot ishga tushdi: @%s", me.username)
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+
+
+class Command(BaseCommand):
+    help = "Telegram botni ishga tushiradi"
+
+    def handle(self, *args, **options):
+        if not settings.BOT_TOKEN:
+            raise CommandError("BOT_TOKEN .env faylida ko'rsatilmagan.")
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s | %(levelname)s | %(message)s")
+        try:
+            asyncio.run(run())
+        except KeyboardInterrupt:
+            self.stdout.write(self.style.WARNING("\nBot to'xtatildi."))
+```
+
+`main.py` ni **o'chiring**. Endi:
+
+```bash
+python manage.py runbot          # 1-terminal
+python manage.py runserver       # 2-terminal
+```
+
+---
+
+## 6-qism. Yakuniy namoyish (5 daqiqa)
+
+Ikkala terminalni ham ishga tushiring va shu ketma-ketlikni bajaring:
+
+1. Botda `🍽 Menyu` → `🍔 Burgerlar` → `Klassik burger` → narx **32 000**
+2. Admin panelda narxni **99 000** qiling, Save bosing
+3. Botda `🔙 Orqaga` → yana `Klassik burger`
+
+**Narx 99 000.** Bot qayta ishga tushirilmadi, kodga tegilmadi.
+
+> "Mana shu — butun kursning eng muhim lahzasi. Endi do'kon egasi
+> dasturchisiz ishlay oladi."
 
 ---
 
 ## Dars natijasi
 
-To'liq oqim ishlaydi:
+| Amal | Natija |
+|---|---|
+| Admin panelda narx o'zgartirish | Bot darhol yangi narxni ko'rsatadi |
+| Admin panelda `faol` ni olib tashlash | Mahsulot botda yo'qoladi |
+| Yangi mahsulot qo'shish | Botda darhol paydo bo'ladi |
+| `python manage.py runbot` | Bot ishga tushadi |
 
-```
-🧺 Savat → ✅ Buyurtma berish → ism → telefon → manzil → to'lov → tasdiq
-```
-
-Har bir qadamda validatsiya bor, `/bekor` har joyda ishlaydi.
-
-Tayyor kod: `darslar/5-dars/`
+Tayyor kod: `darslar/7-dars/` (admin: `admin` / `admin12345`)
 
 ---
 
 ## Uy vazifasi
 
-1. Oqimga **izoh** qadamini qo'shing (manzildan keyin), `⏭ O'tkazib yuborish` tugmasi bilan
-2. Har bir qadamga **`⬅️ Orqaga`** tugmasini qo'shing — oldingi savolga qaytsin
-3. Ism qadamida raqam yozib bo'lmasin (`Ali123` rad etilsin)
-4. Tasdiq ekranida savat tarkibini ham chiqaring
+1. `services.py` ga **`qidiruv(matn)`** funksiyasini qo'shing —
+   nom bo'yicha mahsulot qidirsin (`nom__icontains`)
+2. Kategoriya tugmasida **mahsulotlar sonini** chiqaring: `🍔 Burgerlar (3)`
+3. Mahsulot kartasiga **`⬅️ Oldingi`** / **`Keyingi ➡️`** tugmalarini qo'shing
+4. Servisga `eng_arzon(n)` funksiyasini yozing — eng arzon N ta mahsulot
 
 ---
 
@@ -396,9 +438,10 @@ Tayyor kod: `darslar/5-dars/`
 
 | Xato | Sabab | Yechim |
 |---|---|---|
-| Bot FSM'da javob bermayapti | Shu holat uchun handler yo'q | Filtrsiz "qolgan hammasi" handler qo'shing |
-| `/bekor` ishlamayapti | checkout router pastda | Uni eng birinchi ulang |
-| Keyingi buyurtmada eski ma'lumot | `state.clear()` chaqirilmagan | Yakunda albatta chaqiring |
-| Fallback FSM javoblarini yutyapti | `StateFilter(None)` yo'q | Fallback'ga qo'shing |
-| `KeyError: 'ism'` | `update_data` chaqirilmagan | Har qadamda saqlanayotganini tekshiring |
-| Restartdan keyin holat yo'qoldi | `MemoryStorage` | To'g'ri ishlayapti. Redis — 14-darsda |
+| `SynchronousOnlyOperation` | ORM to'g'ridan-to'g'ri chaqirildi | `@sync_to_async` bilan o'rang |
+| Xuddi shu xato, lekin servisda emas | Lazy FK: `m.kategoriya.nom` | Servis `dict` qaytarsin |
+| `ImproperlyConfigured: settings are not configured` | `python main.py` ishlatildi | `python manage.py runbot` |
+| `ModuleNotFoundError: No module named 'shop'` | Loyiha ildizidan ishga tushirilmagan | `manage.py` yonidan ishlating |
+| Bot eski narxni ko'rsatyapti | Kesh emas — servis chaqirilmagan | Handler `await services...` qilyaptimi |
+| `Model class ... isn't in an application in INSTALLED_APPS` | Noto'g'ri `settings` yuklandi | `DJANGO_SETTINGS_MODULE` va `sys.path` ni tekshiring |
+| N+1: bot sekin | Sikl ichida servis chaqirilyapti | `filter(pk__in=[...])` bilan bitta so'rov |

@@ -1,14 +1,15 @@
 # ============================================================
-#  Barcha klaviaturalar SHU YERDA.
-#  Handler'da tugma yasalmaydi — faqat chaqiriladi.
-#  Sabab: dizaynni bir joydan o'zgartirasiz.
+#  7-DARS — Klaviaturalar endi BAZADAN kelgan dict'lar bilan ishlaydi.
+#
+#  MUHIM: bu fayl bazani BILMAYDI. Unga tayyor ma'lumot beriladi.
+#  Shuning uchun bu yerda hech qanday `.objects.` yoki `await` yo'q.
 # ============================================================
 
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 from callbacks import CartCB, CategoryCB, MenuCB, ProductCB
-from data import CATEGORIES, narx
+from services import narx
 
 BTN_MENYU = "🍽 Menyu"
 BTN_SAVAT = "🧺 Savat"
@@ -23,19 +24,19 @@ def bosh_menyu(savatda: int = 0) -> ReplyKeyboardMarkup:
     return kb.as_markup(resize_keyboard=True)
 
 
-def kategoriyalar() -> InlineKeyboardMarkup:
+def kategoriyalar(royxat: list[dict]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for kalit, k in CATEGORIES.items():
-        kb.button(text=k["nom"], callback_data=CategoryCB(key=kalit))
+    for k in royxat:
+        kb.button(text=k["toliq_nom"], callback_data=CategoryCB(category_id=k["id"]))
     kb.adjust(2)
     kb.row()
     kb.button(text="🧺 Savat", callback_data=MenuCB(action="cart"))
     return kb.as_markup()
 
 
-def mahsulotlar(kalit: str) -> InlineKeyboardMarkup:
+def mahsulotlar(royxat: list[dict]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for m in CATEGORIES[kalit]["mahsulotlar"]:
+    for m in royxat:
         kb.button(text=f"{m['nom']} — {narx(m['narx'])}",
                   callback_data=ProductCB(action="open", product_id=m["id"]))
     kb.adjust(1)
@@ -45,15 +46,15 @@ def mahsulotlar(kalit: str) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def mahsulot_kartasi(product_id: int, qty: int) -> InlineKeyboardMarkup:
+def mahsulot_kartasi(mahsulot_id: int, qty: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="➖", callback_data=ProductCB(action="dec", product_id=product_id, qty=qty))
+    kb.button(text="➖", callback_data=ProductCB(action="dec", product_id=mahsulot_id, qty=qty))
     kb.button(text=f"{qty} ta", callback_data=MenuCB(action="noop"))
-    kb.button(text="➕", callback_data=ProductCB(action="inc", product_id=product_id, qty=qty))
+    kb.button(text="➕", callback_data=ProductCB(action="inc", product_id=mahsulot_id, qty=qty))
     kb.adjust(3)
     pastki = InlineKeyboardBuilder()
     pastki.button(text=f"🛒 Savatga qo'shish ({qty})",
-                  callback_data=ProductCB(action="add", product_id=product_id, qty=qty))
+                  callback_data=ProductCB(action="add", product_id=mahsulot_id, qty=qty))
     pastki.button(text="🔙 Orqaga", callback_data=MenuCB(action="categories"))
     pastki.adjust(1)
     kb.attach(pastki)

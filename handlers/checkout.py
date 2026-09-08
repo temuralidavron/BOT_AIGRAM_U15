@@ -20,7 +20,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 import keyboards as kb
 import storage
 from callbacks import CartCB, CheckoutCB
-from data import narx
+from services import narx
 from states import Checkout
 
 router = Router(name="checkout")
@@ -84,7 +84,7 @@ async def bekor(message: Message, state: FSMContext):
 # ---------- 1-qadam: boshlash ----------
 @router.callback_query(CartCB.filter(F.action == "checkout"))
 async def boshlash(call: CallbackQuery, state: FSMContext):
-    if not storage.olish(call.from_user.id):
+    if not storage.xom(call.from_user.id):
         return await call.answer("Savat bo'sh", show_alert=True)
 
     await state.set_state(Checkout.ism)
@@ -173,14 +173,16 @@ async def tolov(call: CallbackQuery, callback_data: CheckoutCB, state: FSMContex
     await state.update_data(tolov=callback_data.value)
     data = await state.get_data()
 
-    elementlar = storage.olish(call.from_user.id)
+    from handlers.cart import savat_elementlari
+    elementlar = await savat_elementlari(call.from_user.id)
     qatorlar = "\n".join(f"{i}. {e['nom']} — {e['soni']} x {narx(e['narx'])}"
                          for i, e in enumerate(elementlar, 1))
+    jami = sum(e["summa"] for e in elementlar)
 
     await call.message.edit_text(
         f"🧾 <b>Buyurtmani tasdiqlang</b>\n\n{qatorlar}\n\n"
         f"➖➖➖➖➖➖➖➖\n"
-        f"💳 Jami: <b>{narx(storage.jami(call.from_user.id))}</b>\n\n"
+        f"💳 Jami: <b>{narx(jami)}</b>\n\n"
         f"👤 {data['ism']}\n📱 {data['telefon']}\n📍 {data['manzil']}\n"
         f"💵 {data['tolov'].capitalize()}",
         reply_markup=tasdiq_kb(),
@@ -191,8 +193,9 @@ async def tolov(call: CallbackQuery, callback_data: CheckoutCB, state: FSMContex
 # ---------- 6-qadam: tasdiq ----------
 @router.callback_query(CheckoutCB.filter(F.action == "submit"))
 async def tasdiq(call: CallbackQuery, state: FSMContext):
+    from handlers.cart import savat_elementlari
     data = await state.get_data()
-    jami = storage.jami(call.from_user.id)
+    jami = sum(e["summa"] for e in await savat_elementlari(call.from_user.id))
 
     storage.tozalash(call.from_user.id)
     await state.clear()

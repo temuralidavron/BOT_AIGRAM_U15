@@ -3,6 +3,7 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.types import Message
 
 import keyboards as kb
+import services
 import storage
 
 router = Router(name="common")
@@ -19,8 +20,11 @@ async def start(message: Message):
 @router.message(Command("menyu"))
 @router.message(F.text == kb.BTN_MENYU)
 async def menyu(message: Message):
+    royxat = await services.kategoriyalar()
+    if not royxat:
+        return await message.answer("😕 Hozircha katalog bo'sh.")
     await message.answer("🍽 <b>Menyu</b>\n\nKategoriyani tanlang:",
-                         reply_markup=kb.kategoriyalar())
+                         reply_markup=kb.kategoriyalar(royxat))
 
 
 @router.message(F.text == kb.BTN_PROFIL)

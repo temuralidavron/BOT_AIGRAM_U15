@@ -1,29 +1,52 @@
+# ============================================================
+#  7-DARS — Savat endi baza bilan "birlashtiriladi".
+#
+#  storage faqat {id: soni} biladi.
+#  Nom va narx bazadan olinadi va shu yerda birlashtiriladi.
+# ============================================================
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 import keyboards as kb
+import services
 import storage
 from callbacks import CartCB, MenuCB
-from data import narx
+from services import narx
 
 router = Router(name="cart")
 
 
-def savat_matni(elementlar: list[dict], jami: int) -> str:
+async def savat_elementlari(user_id: int) -> list[dict]:
+    """{id: soni} + bazadagi ma'lumot = to'liq savat."""
+    xom = storage.xom(user_id)
+    if not xom:
+        return []
+    mahsulotlar = await services.mahsulotlar_by_ids(list(xom))
+    natija = []
+    for mahsulot_id, soni in xom.items():
+        m = mahsulotlar.get(mahsulot_id)
+        if m:                                  # mahsulot o'chirilgan bo'lishi mumkin
+            natija.append({**m, "soni": soni, "summa": m["narx"] * soni})
+    return natija
+
+
+def savat_matni(elementlar: list[dict]) -> str:
     qatorlar = [
         f"{i}. {e['nom']}\n    {e['soni']} x {narx(e['narx'])} = <b>{narx(e['summa'])}</b>"
         for i, e in enumerate(elementlar, 1)
     ]
-    return "🧺 <b>Savatingiz</b>\n\n" + "\n".join(qatorlar) + \
-           f"\n\n➖➖➖➖➖➖➖➖\n💳 Jami: <b>{narx(jami)}</b>"
+    jami = sum(e["summa"] for e in elementlar)
+    return ("🧺 <b>Savatingiz</b>\n\n" + "\n".join(qatorlar) +
+            f"\n\n➖➖➖➖➖➖➖➖\n💳 Jami: <b>{narx(jami)}</b>")
 
 
 async def korsatish(target: Message | CallbackQuery, user_id: int):
-    elementlar = storage.olish(user_id)
+    elementlar = await savat_elementlari(user_id)
     if not elementlar:
         matn, markup = "🧺 Savatingiz bo'sh.\n\nMenyudan biror narsa tanlang!", None
     else:
-        matn, markup = savat_matni(elementlar, storage.jami(user_id)), kb.savat(elementlar)
+        matn, markup = savat_matni(elementlar), kb.savat(elementlar)
 
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(matn, reply_markup=markup)
@@ -62,6 +85,3 @@ async def tozalash(call: CallbackQuery):
     storage.tozalash(call.from_user.id)
     await call.message.edit_text("🧺 Savat tozalandi.")
     await call.answer()
-
-
-# «Buyurtma berish» tugmasini endi handlers/checkout.py ushlaydi
